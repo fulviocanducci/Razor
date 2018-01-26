@@ -27,6 +27,11 @@
       or publish-time. By default, the Razor SDK will suppress the copying of reference assemblies to the publish directory.
     -->
     <CopyRefAssembliesToPublishDirectory Condition="'$(CopyRefAssembliesToPublishDirectory)'==''">false</CopyRefAssembliesToPublishDirectory>
+
+    <!--
+      Set to true to run Razor tasks in a persistent server. This offers significant performance benefits.
+    -->
+    <UseRazorBuildServer Condition="'$(UseRazorBuildServer)'==''">false</UseRazorBuildServer>
   </PropertyGroup>
 
   <PropertyGroup>

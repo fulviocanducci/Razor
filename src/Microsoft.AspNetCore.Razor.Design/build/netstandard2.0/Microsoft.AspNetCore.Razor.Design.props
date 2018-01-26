@@ -22,6 +22,7 @@
     <_RazorTaskAssembly Condition="'$(_RazorTaskAssembly)'==''">$(_RazorMSBuildRoot)\tasks\$(_RazorTaskFolder)\Microsoft.AspNetCore.Razor.Tasks.dll</_RazorTaskAssembly>
   </PropertyGroup>
 
-  <UsingTask TaskName="Microsoft.AspNetCore.Razor.Tasks.RazorGenerate" AssemblyFile="$(_RazorTaskAssembly)" />
+  <UsingTask TaskName="Microsoft.AspNetCore.Razor.Tasks.RazorGeneratePass1" AssemblyFile="$(_RazorTaskAssembly)" />
+  <UsingTask TaskName="Microsoft.AspNetCore.Razor.Tasks.RazorGeneratePass2" AssemblyFile="$(_RazorTaskAssembly)" />
   <UsingTask TaskName="Microsoft.AspNetCore.Razor.Tasks.RazorTagHelper" AssemblyFile="$(_RazorTaskAssembly)" />
 </Project>

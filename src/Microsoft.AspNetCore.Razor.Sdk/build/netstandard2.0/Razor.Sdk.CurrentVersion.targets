@@ -23,15 +23,13 @@
   -->
   <PropertyGroup>
     <PrepareForRazorGenerateDependsOn>
-      ResolveRazorGenerateInputs;
-      ResolveAssemblyReferenceRazorGenerateInputs;
       _EnsureRazorCompilerReferenced;
-      ResolveTagHelperRazorGenerateInputs
+      ResolveRazorGenerateInputs;
+      ResolveAssemblyReferenceRazorGenerateInputs
     </PrepareForRazorGenerateDependsOn>
 
     <RazorGenerateDependsOn>
       PrepareForRazorGenerate;
-      _EnsureRazorCompilerReferenced;
       RazorCoreGenerate
     </RazorGenerateDependsOn>
   
@@ -44,29 +42,32 @@
     </ResolveRazorCompileInputsDependsOn>
 
     <RazorCompileDependsOn>
+      _EnsureRazorCompilerReferenced;
       PrepareForRazorCompile;
       RazorCoreCompile
     </RazorCompileDependsOn>
   </PropertyGroup>
 
   <!-- 
-    Default values for properties that affect Razor targets to the standard build lifecycle.
+    The RazorCompileMode property affects how Razor targets attach to the standard build lifecycle.
+
+    Possible values:
+      None
+      CompileToSeparateAssemblyOnPublish
+      CompileToSeparateAssemblyOnBuild
+      CompileToSingleAssembly
   -->
-  <PropertyGroup Condition="'$(RazorCompileOnBuild)'==''">
-    <RazorCompileOnBuild>false</RazorCompileOnBuild>
+  <PropertyGroup>
+    <!-- If the old MVC Precompilation setting is turned on, then respect the old semantics --> 
+    <RazorCompileMode Condition="'$(MvcRazorCompileOnPublish)'=='true'">CompileToSeparateAssemblyOnPublish</RazorCompileMode>
+    <RazorCompileMode Condition="'$(MvcRazorCompileOnPublish)'=='false'">None</RazorCompileMode>
+
+    <!-- Default to compilation during publish for now -->
+    <RazorCompileMode Condition="'$(RazorCompileMode)'==''">CompileToSeparateAssemblyOnPublish</RazorCompileMode>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(RazorCompileOnPublish)'==''">
-    <!-- Always compile on publish by default if we're compiling on build -->
-    <RazorCompileOnPublish Condition="'$(RazorCompileOnBuild)'=='true'">true</RazorCompileOnPublish>
-
-    <!-- Compatibility with the old MVC Precompilation setting -->
-    <RazorCompileOnPublish Condition="'$(RazorCompileOnPublish)'==''">$(MvcRazorCompileOnPublish)</RazorCompileOnPublish>
-
-    <!-- Default to on if MvcRazorCompileOnPublish isn't set for some reason -->
-    <RazorCompileOnPublish Condition="'$(RazorCompileOnPublish)'==''">true</RazorCompileOnPublish>
-    
-    <UseRazorBuildServer Condition="'$(UseRazorBuildServer)'==''">false</UseRazorBuildServer>
+  <PropertyGroup Condition="'$(RazorCompileMode)'=='CompileToSingleAssembly'"> 
+    <CoreCompileDependsOn>$(CoreCompileDependsOn);_RazorGenerateForSingleAssembly</CoreCompileDependsOn>
   </PropertyGroup>
 
   <!--
@@ -128,13 +129,16 @@
     <RazorIntermediateAssembly Condition="'$(RazorIntermediateAssembly)'==''" Include="$(IntermediateOutputPath)$(RazorTargetName).dll" />
     <!-- Used in Compilation.targets -->   
     <_RazorDebugSymbolsIntermediatePath Condition="'$(_RazorDebugSymbolsProduced)'=='true'" Include="$(IntermediateOutputPath)$(RazorTargetName).pdb" />
+
+    <RazorTempIntermediateAssembly Condition="'$(RazorTempIntermediateAssembly)'==''" Include="$(IntermediateOutputPath)Razor\$(TargetName).dll" />
   </ItemGroup>
 
   <!--
     These are the targets that generate code using Razor, separated from the main file for ease of maintenance.
     Most targets related to Razor code generation are defined there.
   -->
-  <Import Project="$(RazorCodeGenerationTargetsPath)"
+  <Import 
+    Project="$(RazorCodeGenerationTargetsPath)"
     Condition="'$(RazorCodeGenerationTargetsPath)' != '' AND Exists('$(RazorCodeGenerationTargetsPath)')" />
 
   <!-- 
@@ -176,12 +180,6 @@
     <ItemGroup Condition="'$(EnableDefaultRazorGenerateItems)'=='true'">
       <RazorGenerate Include="@(Content)" Condition="'%(Content.Extension)'=='.cshtml'" />
     </ItemGroup>
-
-    <ItemGroup>
-      <RazorGenerate Update="@(RazorGenerate)" Condtion="'%(RazorGenerate.GeneratedOutput)'==''">
-        <GeneratedOutput>$(RazorGenerateIntermediateOutputPath)%(RelativeDir)%(Filename).cs</GeneratedOutput>
-      </RazorGenerate>
-    </ItemGroup>
   </Target>
 
   <!-- 
@@ -192,7 +190,7 @@
     DependsOnTargets="ResolveReferences">
     <ItemGroup>
       <RazorReferencePath Include="@(ReferencePath)"/>
-      <RazorReferencePath Include="$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)$(TargetName)$(TargetExt)'))"/>
+      <RazorReferencePath Include="$([System.IO.Path]::GetFullPath('$(RazorGenerateIntermediateOutputPath)$(TargetName)$(TargetExt)'))"/>
     </ItemGroup>
   </Target>
 
@@ -204,8 +202,15 @@
   <Target Name="ResolveRazorCompileInputs" DependsOnTargets="$(ResolveRazorCompileInputsDependsOn)">
   </Target>
 
+  <Target 
+    Name="_RazorGenerateForSingleAssembly"
+    DependsOnTargets="RazorGenerate"
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSingleAssembly'">
+  </Target>
+
   <!--
-    This target is called after PrepareForPublish when RazorCompileOnPublish=true so that we can hook into publish.
+    This target is called after PrepareForPublish so that we can hook into publish.
+
     This target just hooks up other targets since Publish and PrepareForPublish don't have a DependsOnTargets
     property we can use. 
   -->
@@ -213,7 +218,7 @@
     Name="_RazorPrepareForPublish"
     AfterTargets="PrepareForPublish"
     DependsOnTargets="RazorCompile"
-    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileOnPublish)'=='true'">
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSeparateAssemblyOnPublish'">
   </Target>
 
   <!--
@@ -223,7 +228,7 @@
     Name="_RazorAddBuiltProjectOutputGroupOutput"
     DependsOnTargets="ResolveRazorGenerateInputs"
     BeforeTargets="BuiltProjectOutputGroup"
-    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileOnBuild)'=='true'">
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSeparateAssemblyOnBuild'">
 
     <PropertyGroup>
       <RazorOutputPath Condition="'$(RazorOutputPath)'==''">$([MSBuild]::EnsureTrailingSlash('$(OutDir)'))</RazorOutputPath>
@@ -243,7 +248,7 @@
     Name="_RazorGetCopyToOutputDirectoryItems"
     BeforeTargets="GetCopyToOutputDirectoryItems"
     DependsOnTargets="RazorCompile"
-    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileOnBuild)'=='true'">
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSeparateAssemblyOnBuild'">
 
     <!-- 
       This condition needs to be inside the target because it the itemgroup will be populated after the target's
@@ -273,7 +278,7 @@
     Name="_RazorGetCopyToPublishDirectoryItems"
     BeforeTargets="GetCopyToPublishDirectoryItems"
     DependsOnTargets="RazorCompile"
-    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileOnPublish)'=='true'">
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSeparateAssemblyOnPublish'">
 
     <!-- 
       This condition needs to be inside the target because it the itemgroup will be populated after the target's
@@ -300,7 +305,7 @@
     Name="_RazorCopyFilesToOutputDirectory" 
     DependsOnTargets="RazorCompile"
     AfterTargets="CopyFilesToOutputDirectory"
-    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileOnBuild)'=='true'">
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSeparateAssemblyOnBuild'">
 
     <PropertyGroup>
       <RazorOutputPath Condition="'$(RazorOutputPath)'==''">$([MSBuild]::EnsureTrailingSlash('$(OutDir)'))</RazorOutputPath>
@@ -351,7 +356,7 @@
   <Target
     Name="_RazorComputeFilesToPublish"
     AfterTargets="ComputeRefAssembliesToPublish"
-    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileOnPublish)'=='true' and '@(RazorGenerate)'!=''">
+    Condition="'$(ResolvedRazorCompileToolset)'=='RazorSdk' and '$(RazorCompileMode)'=='CompileToSeparateAssemblyOnPublish' and '@(RazorGenerate)'!=''">
 
     <!-- If we generated an assembly/pdb then include those -->
     <ItemGroup>
@@ -385,7 +390,6 @@
 
   <Target Name="_EnsureRazorCompilerReferenced" Condition="'$(IsRazorCompilerReferenced)' != 'true'">
     <Error Text="A reference to Microsoft.AspNetCore.Razor.Design is required for this target to succeed. See todo:fwlink for instructions on how to resolve this." />
-
   </Target>
 
   <!--

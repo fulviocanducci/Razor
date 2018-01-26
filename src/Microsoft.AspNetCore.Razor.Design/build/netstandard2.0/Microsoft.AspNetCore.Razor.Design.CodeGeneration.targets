@@ -21,6 +21,19 @@
     <_RazorGenerateInputsHashFile>$(IntermediateOutputPath)$(MSBuildProjectName).RazorCoreGenerate.cache</_RazorGenerateInputsHashFile>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <RazorCoreGenerateDependsOn>
+      $(RazorCoreGenerateDependsOn);
+      _HashRazorGenerateInputs;
+      _ResolveRazorGenerateOutputs;
+      _RazorGeneratePass1;
+      _PrepareForRazorTempCompile;
+      RazorTempCompile;
+      _RazorGenerateResolveTagHelpers;
+      _RazorGeneratePass2
+    </RazorCoreGenerateDependsOn>
+  </PropertyGroup>
+
   <!--
     This target will only be called when we have some .cshtml files that are going to participate in code generation.
 
@@ -49,9 +62,58 @@
     </ItemGroup>
   </Target>
 
+  <Target Name="_ResolveRazorGenerateOutputs">
+    <ItemGroup>
+      <RazorGenerate Update="@(RazorGenerate)" Condtion="'%(RazorGenerate.GeneratedOutputPass1)'==''">
+        <GeneratedOutputPass1>$(RazorGenerateIntermediateOutputPath)%(RelativeDir)%(Filename).g.i.cs</GeneratedOutputPass1>
+      </RazorGenerate>
+      <RazorGenerate Update="@(RazorGenerate)" Condtion="'%(RazorGenerate.GeneratedOutputPass2)'==''">
+        <GeneratedOutputPass2>$(RazorGenerateIntermediateOutputPath)%(RelativeDir)%(Filename).g.cs</GeneratedOutputPass2>
+      </RazorGenerate>
+    </ItemGroup>
+
+    <ItemGroup>
+      <_RazorGenerateInputPass1 Include="%(RazorGenerate.Identity)" Condition="'%(RazorGenerate.GeneratedOutputPass1)'!=''"/>
+      <_RazorGenerateInputPass2 Include="%(RazorGenerate.Identity)" Condition="'%(RazorGenerate.GeneratedOutputPass2)'!=''"/>
+
+      <_RazorGenerateOutputPass1 Include="%(RazorGenerate.GeneratedOutputPass1)" Condition="'%(RazorGenerate.GeneratedOutputPass1)'!=''"/>    
+      <_RazorGenerateOutputPass2 Include="%(RazorGenerate.GeneratedOutputPass2)" Condition="'%(RazorGenerate.GeneratedOutputPass2)'!=''"/>  
+    </ItemGroup>
+  </Target>
+
   <Target
-    Name="ResolveTagHelperRazorGenerateInputs"
-    DependsOnTargets="Compile"
+    Name="_RazorGeneratePass1"
+    Inputs="$(MSBuildAllProjects);$(_RazorGenerateInputsHashFile);@(_RazorGenerateInputPass1)"
+    Outputs="@(_RazorGenerateOutputPass1)"
+    Condition="'@(_RazorGenerateInputPass1)'!= ''">
+
+    <MakeDir
+      Directories="%(_RazorGenerateOutputPass1.RelativeDir)"
+      Condition="!Exists('%(_RazorGenerateOutputPass1.RelativeDir)')" />
+
+    <RazorGeneratePass1
+      Debug="$(_RazorDebugGenerateCodeTask)"
+      DebugTool="$(_RazorDebugGenerateCodeTool)"
+      ToolAssembly="$(_RazorToolAssembly)"
+      UseServer="$(UseRazorBuildServer)"
+      Sources="@(_RazorGenerateInputPass1)"
+      OutputFiles="@(_RazorGenerateOutputPass1)"
+      ProjectRoot="$(MSBuildProjectDirectory)" />
+
+    <ItemGroup>
+      <FileWrites Include="@(_RazorGenerateOutputPass1)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_PrepareForRazorTempCompile">
+    <ItemGroup>
+      <RazorTempCompile Include="@(Compile)" />
+      <RazorTempCompile Include="@(_RazorGenerateOutputPass1)" />
+    </ItemGroup>
+  </Target>
+
+  <Target
+    Name="_RazorGenerateResolveTagHelpers"
     Inputs="$(MSBuildAllProjects);@(RazorReferencePath)"
     Outputs="$(_RazorTagHelperInputCache)"
     Condition="'@(RazorGenerate)'!=''">
@@ -83,51 +145,40 @@
     </RazorTagHelper>
   </Target>
 
-  <Target Name="_ResolveRazorGenerateOutputs">
-    <ItemGroup>
-      <_RazorGenerateOutput Include="%(RazorGenerate.GeneratedOutput)" Condition="'%(RazorGenerate.GeneratedOutput)'!=''"/>    
-    </ItemGroup>
-  </Target>
-
-  <PropertyGroup>
-    <RazorCoreGenerateDependsOn>
-      _HashRazorGenerateInputs;
-      _ResolveRazorGenerateOutputs;
-    </RazorCoreGenerateDependsOn>
-  </PropertyGroup>
-
   <Target
-    Name="RazorCoreGenerate"
-    DependsOnTargets="$(RazorCoreGenerateDependsOn)"
-    Inputs="$(MSBuildAllProjects);$(_RazorGenerateInputsHashFile);$(_RazorTagHelperOutputCache);@(RazorGenerate)"
-    Outputs="@(_RazorGenerateOutput)"
-    Condition="'@(RazorGenerate)'!= ''">
-
-    <RemoveDir
-      Directories="$(RazorGenerateIntermediateOutputPath)"
-      Condition = "Exists('$(RazorGenerateIntermediateOutputPath)')"/>
+    Name="_RazorGeneratePass2"
+    Inputs="$(MSBuildAllProjects);$(_RazorGenerateInputsHashFile);$(_RazorTagHelperOutputCache);@(_RazorGenerateInputPass2)"
+    Outputs="@(_RazorGenerateOutputPass2)"
+    Condition="'@(_RazorGenerateInputPass2)'!= ''">
 
     <MakeDir
-      Directories="%(_RazorGenerateOutput.RelativeDir)"
-      Condition="!Exists('%(_RazorGenerateOutput.RelativeDir)')" />
+      Directories="%(_RazorGenerateOutputPass2.RelativeDir)"
+      Condition="!Exists('%(_RazorGenerateOutputPass2.RelativeDir)')" />
 
-    <RazorGenerate
+    <RazorGeneratePass2
       Debug="$(_RazorDebugGenerateCodeTask)"
       DebugTool="$(_RazorDebugGenerateCodeTool)"
       ToolAssembly="$(_RazorToolAssembly)"
       UseServer="$(UseRazorBuildServer)"
-      Sources="@(RazorGenerate)"
+      Sources="@(_RazorGenerateInputPass2)"
+      OutputFiles="@(_RazorGenerateOutputPass2)"
       ProjectRoot="$(MSBuildProjectDirectory)"
-      TagHelperManifest="$(_RazorTagHelperOutputCache)"
-      OutputPath="$(RazorGenerateIntermediateOutputPath)" />
+      TagHelperManifest="$(_RazorTagHelperOutputCache)" />
 
     <ItemGroup>
-      <FileWrites Include="@(_RazorGenerateOutput)" />
+      <FileWrites Include="@(_RazorGenerateOutputPass2)" />
+      <Compile Include="@(_RazorGenerateOutputPass2)" />
     </ItemGroup>
   </Target>
 
+  <Target Name="RazorCoreGenerate" DependsOnTargets="$(RazorCoreGenerateDependsOn)">
+  </Target>
+
   <PropertyGroup>
-    <ResolveRazorCompileInputsDependsOn>$(ResolveRazorCompileInputsDependsOn);_ResolveGeneratedRazorCompileInputs</ResolveRazorCompileInputsDependsOn>
+    <ResolveRazorCompileInputsDependsOn>
+      $(ResolveRazorCompileInputsDependsOn);
+      _ResolveGeneratedRazorCompileInputs
+    </ResolveRazorCompileInputsDependsOn>
   </PropertyGroup>
 
   <Target Name="_ResolveGeneratedRazorCompileInputs">

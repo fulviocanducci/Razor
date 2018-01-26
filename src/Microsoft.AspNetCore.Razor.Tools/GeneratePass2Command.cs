@@ -13,20 +13,20 @@ using Newtonsoft.Json;
 
 namespace Microsoft.AspNetCore.Razor.Tools
 {
-    internal class GenerateCommand : CommandBase
+    internal class GeneratePass2Command : CommandBase
     {
-        public GenerateCommand(Application parent)
-            : base(parent, "generate")
+        public GeneratePass2Command(Application parent)
+            : base(parent, "generate-pass2")
         {
-            Sources = Argument("sources", ".cshtml files to compile", multipleValues: true);
+            Sources = Option("-s|--source", ".cshtml files to compile", CommandOptionType.MultipleValue);
+            OutputFiles = Option("-o|--output", "output file names", CommandOptionType.MultipleValue);
             ProjectDirectory = Option("-p", "project root directory", CommandOptionType.SingleValue);
-            OutputDirectory = Option("-o", "output directory", CommandOptionType.SingleValue);
             TagHelperManifest = Option("-t", "tag helper manifest file", CommandOptionType.SingleValue);
         }
 
-        public CommandArgument Sources { get; }
+        public CommandOption Sources { get; }
 
-        public CommandOption OutputDirectory { get; }
+        public CommandOption OutputFiles { get; }
 
         public CommandOption ProjectDirectory { get; }
 
@@ -36,24 +36,30 @@ namespace Microsoft.AspNetCore.Razor.Tools
         {
             var result = ExecuteCore(
                 projectDirectory: ProjectDirectory.Value(),
-                outputDirectory: OutputDirectory.Value(),
                 tagHelperManifest: TagHelperManifest.Value(),
-                sources: Sources.Values.ToArray());
+                sources: Sources.Values.ToArray(),
+                outputFiles: OutputFiles.Values.ToArray());
 
             return Task.FromResult(result);
         }
 
         protected override bool ValidateArguments()
         {
-            if (string.IsNullOrEmpty(OutputDirectory.Value()))
+            if (string.IsNullOrEmpty(OutputFiles.Value()))
             {
-                Error.WriteLine($"{OutputDirectory.ValueName} not specified.");
+                Error.WriteLine($"{OutputFiles.ValueName} not specified.");
                 return false;
             }
 
             if (Sources.Values.Count == 0)
             {
-                Error.WriteLine($"{Sources.Name} should have at least one value.");
+                Error.WriteLine($"{Sources.LongName} should have at least one value.");
+                return false;
+            }
+
+            if (Sources.Values.Count != OutputFiles.Values.Count)
+            {
+                Error.WriteLine($"{Sources.LongName} and {OutputFiles.LongName} should have the same number of values.");
                 return false;
             }
 
@@ -65,10 +71,9 @@ namespace Microsoft.AspNetCore.Razor.Tools
             return true;
         }
 
-        private int ExecuteCore(string projectDirectory, string outputDirectory, string tagHelperManifest, string[] sources)
+        private int ExecuteCore(string projectDirectory, string tagHelperManifest, string[] sources, string[] outputFiles)
         {
             tagHelperManifest = Path.Combine(projectDirectory, tagHelperManifest);
-            outputDirectory = Path.Combine(projectDirectory, outputDirectory);
 
             var tagHelpers = GetTagHelpers(tagHelperManifest);
 
@@ -81,7 +86,7 @@ namespace Microsoft.AspNetCore.Razor.Tools
 
             var templateEngine = new MvcRazorTemplateEngine(engine, RazorProject.Create(projectDirectory));
 
-            var sourceItems = GetRazorFiles(projectDirectory, sources);
+            var sourceItems = GetRazorFiles(projectDirectory, sources, outputFiles);
             var results = GenerateCode(templateEngine, sourceItems);
 
             var success = true;
@@ -97,11 +102,7 @@ namespace Microsoft.AspNetCore.Razor.Tools
                     }
                 }
 
-                var viewFile = result.ViewFileInfo.ViewEnginePath.Substring(1);
-                var outputFileName = Path.ChangeExtension(viewFile, ".cs");
-
-                var outputFilePath = Path.Combine(outputDirectory, outputFileName);
-                File.WriteAllText(outputFilePath, result.CSharpDocument.GeneratedCode);
+                File.WriteAllText(result.OutputFilePath, result.CSharpDocument.GeneratedCode);
             }
 
             return success ? 0 : -1;
@@ -127,25 +128,26 @@ namespace Microsoft.AspNetCore.Razor.Tools
             }
         }
 
-        private List<SourceItem> GetRazorFiles(string projectDirectory, string[] sources)
+        private List<WorkItem> GetRazorFiles(string projectDirectory, string[] sources, string[] outputFiles)
         {
             var trimLength = projectDirectory.EndsWith("/") ? projectDirectory.Length - 1 : projectDirectory.Length;
 
-            var items = new List<SourceItem>(sources.Length);
+            var items = new List<WorkItem>(sources.Length);
             for (var i = 0; i < sources.Length; i++)
             {
-                var fullPath = Path.Combine(projectDirectory, sources[i]);
-                if (fullPath.StartsWith(projectDirectory, StringComparison.OrdinalIgnoreCase))
+                var sourceFilePath = Path.Combine(projectDirectory, sources[i]);
+                var outputFilePath = Path.Combine(projectDirectory, outputFiles[i]);
+                if (sourceFilePath.StartsWith(projectDirectory, StringComparison.OrdinalIgnoreCase))
                 {
-                    var viewEnginePath = fullPath.Substring(trimLength).Replace('\\', '/');
-                    items.Add(new SourceItem(fullPath, viewEnginePath));
+                    var viewEnginePath = sourceFilePath.Substring(trimLength).Replace('\\', '/');
+                    items.Add(new WorkItem(sourceFilePath, viewEnginePath, outputFilePath));
                 }
             }
 
             return items;
         }
 
-        private OutputItem[] GenerateCode(RazorTemplateEngine templateEngine, IReadOnlyList<SourceItem> sources)
+        private OutputItem[] GenerateCode(RazorTemplateEngine templateEngine, IReadOnlyList<WorkItem> sources)
         {
             var outputs = new OutputItem[sources.Count];
             Parallel.For(0, outputs.Length, new ParallelOptions() { MaxDegreeOfParallelism = 4 }, i =>
@@ -162,27 +164,32 @@ namespace Microsoft.AspNetCore.Razor.Tools
         private struct OutputItem
         {
             public OutputItem(
-                SourceItem viewFileInfo,
+                WorkItem input,
                 RazorCSharpDocument cSharpDocument)
             {
-                ViewFileInfo = viewFileInfo;
+                Input = input;
                 CSharpDocument = cSharpDocument;
             }
 
-            public SourceItem ViewFileInfo { get; }
+            public WorkItem Input { get; }
+
+            public string OutputFilePath => Input.OutputFilePath;
 
             public RazorCSharpDocument CSharpDocument { get; }
         }
 
-        private struct SourceItem
+        private struct WorkItem
         {
-            public SourceItem(string fullPath, string viewEnginePath)
+            public WorkItem(string sourceFilePath, string viewEnginePath, string outputFilePath)
             {
-                FullPath = fullPath;
+                SoureFilePath = sourceFilePath;
                 ViewEnginePath = viewEnginePath;
+                OutputFilePath = outputFilePath;
             }
 
-            public string FullPath { get; }
+            public string SoureFilePath { get; }
+
+            public string OutputFilePath { get; }
 
             public string ViewEnginePath { get; }
 
@@ -192,7 +199,7 @@ namespace Microsoft.AspNetCore.Razor.Tools
                 // 0 causes constructor to throw
                 var bufferSize = 1;
                 return new FileStream(
-                    FullPath,
+                    SoureFilePath,
                     FileMode.Open,
                     FileAccess.Read,
                     FileShare.ReadWrite,

@@ -7,21 +7,18 @@ using Microsoft.CodeAnalysis.CommandLine;
 
 namespace Microsoft.AspNetCore.Razor.Tasks
 {
-    public class RazorGenerate : DotNetToolTask
+    public class RazorGeneratePass1 : DotNetToolTask
     {
         [Required]
         public string[] Sources { get; set; }
 
         [Required]
+        public string[] OutputFiles { get; set; }
+
+        [Required]
         public string ProjectRoot { get; set; }
 
-        [Required]
-        public string OutputPath { get; set; }
-
-        [Required]
-        public string TagHelperManifest { get; set; }
-
-        internal override string Command => "generate";
+        internal override string Command => "generate-pass1";
 
         protected override string GenerateResponseFileCommands()
         {
@@ -29,19 +26,20 @@ namespace Microsoft.AspNetCore.Razor.Tasks
 
             builder.AppendLine(Command);
 
-            for (var i = 0; i < Sources.Length; i++)
-            {
-                builder.AppendLine(Sources[i]);
-            }
-
             builder.AppendLine("-p");
             builder.AppendLine(ProjectRoot);
 
-            builder.AppendLine("-o");
-            builder.AppendLine(OutputPath);
+            for (var i = 0; i < Sources.Length; i++)
+            {
+                builder.AppendLine("-s");
+                builder.AppendLine(Sources[i]);
+            }
 
-            builder.AppendLine("-t");
-            builder.AppendLine(TagHelperManifest);
+            for (var i = 0; i < Sources.Length; i++)
+            {
+                builder.AppendLine("-o");
+                builder.AppendLine(OutputFiles[i]);
+            }
 
             return builder.ToString();
         }
