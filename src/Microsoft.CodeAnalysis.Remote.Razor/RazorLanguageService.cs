@@ -10,34 +10,81 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.CodeAnalysis.Razor;
-using Microsoft.VisualStudio.LanguageServices.Razor;
+using Microsoft.CodeAnalysis.Razor.ProjectSystem;
 
 namespace Microsoft.CodeAnalysis.Remote.Razor
 {
-    internal class RazorLanguageService : ServiceHubServiceBase
+    internal class RazorLanguageService : RazorServiceBase
     {
-        public RazorLanguageService(Stream stream, IServiceProvider serviceProvider)
-            : base(serviceProvider, stream)
-        {
-            Rpc.JsonSerializer.Converters.Add(new RazorDiagnosticJsonConverter());
+        private readonly static RazorConfiguration DefaultConfiguration = FallbackRazorConfiguration.MVC_2_0;
 
-            // Due to this issue - https://github.com/dotnet/roslyn/issues/16900#issuecomment-277378950
-            // We need to manually start the RPC connection. Otherwise we'd be opting ourselves into 
-            // race condition prone call paths.
-            Rpc.StartListening();
+        public RazorLanguageService(Stream stream, IServiceProvider serviceProvider)
+            : base(stream, serviceProvider)
+        {
         }
 
-        public async Task<TagHelperResolutionResult> GetTagHelpersAsync(Guid projectIdBytes, string projectDebugName, CancellationToken cancellationToken = default(CancellationToken))
+        public async Task<TagHelperResolutionResult> GetTagHelpersAsync(
+            ProjectSnapshotHandle projectHandle, 
+            string factoryTypeName,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
-            var projectId = ProjectId.CreateFromSerialized(projectIdBytes, projectDebugName);
+            var project = await GetProjectSnapshotAsync(projectHandle, cancellationToken).ConfigureAwait(false);
 
-            var solution = await GetSolutionAsync(cancellationToken).ConfigureAwait(false);
-            var project = solution.GetProject(projectId);
+            var templateEngine = CreateTemplateEngine(project, factoryTypeName);
 
-            var resolver = new DefaultTagHelperResolver(designTime: true);
-            var result = await resolver.GetTagHelpersAsync(project, cancellationToken).ConfigureAwait(false);
+            var descriptors = new List<TagHelperDescriptor>();
 
-            return result;
+            var providers = templateEngine.Engine.Features.OfType<ITagHelperDescriptorProvider>().ToArray();
+
+            var results = new List<TagHelperDescriptor>();
+            var context = TagHelperDescriptorProviderContext.Create(results);
+            context.SetCompilation(await project.WorkspaceProject.GetCompilationAsync());
+
+            for (var i = 0; i < providers.Length; i++)
+            {
+                var provider = providers[i];
+                provider.Execute(context);
+            }
+
+            var diagnostics = new List<RazorDiagnostic>();
+            var resolutionResult = new TagHelperResolutionResult(results, diagnostics);
+
+            return resolutionResult;
+        }
+
+        internal RazorTemplateEngine CreateTemplateEngine(ProjectSnapshot project, string factoryTypeName)
+        {
+            // This section is really similar to the code DefaultTemplatEngineFactoryService
+            // but with a few differences that are significant in the remote scenario
+            //
+            // Most notably, we are going to find the Tag Helpers using a compilation, and we have
+            // no editor settings.
+            Action<IRazorEngineBuilder> configure = (b) =>
+            {
+                b.Features.Add(new DefaultTagHelperDescriptorProvider() { DesignTime = true });
+            };
+
+            // The default configuration currently matches MVC-2.0. Beyond MVC-2.0 we added SDK support for 
+            // properly detecting project versions, so that's a good version to assume when we can't find a
+            // configuration.
+            var configuration = project?.Configuration ?? DefaultConfiguration;
+
+            // If there's no factory to handle the configuration then fall back to a very basic configuration.
+            //
+            // This will stop a crash from happening in this case (misconfigured project), but will still make
+            // it obvious to the user that something is wrong.
+            var factory = CreateFactory(configuration, factoryTypeName) ?? RazorServices.FallbackTemplateEngineFactory;
+            return factory.Create(configuration, EmptyProject.Instance, configure);
+        }
+
+        private ITemplateEngineFactory CreateFactory(RazorConfiguration configuration, string factoryTypeName)
+        {
+            if (factoryTypeName == null)
+            {
+                return null;
+            }
+
+            return (ITemplateEngineFactory)Activator.CreateInstance(Type.GetType(factoryTypeName, throwOnError: true));
         }
 
         public Task<IEnumerable<DirectiveDescriptor>> GetDirectivesAsync(Guid projectIdBytes, string projectDebugName, CancellationToken cancellationToken = default(CancellationToken))
